@@ -47,7 +47,6 @@ testerはデフォルトで`/src/bin/a.rs`を実行します．実行ファイ�
 ```rust
 // 実行部分
 let p = std::process::Command::new("./a.out")
-    .args(["run", "--release"])
 ```
 
 ```rust
