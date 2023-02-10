@@ -1,3 +1,5 @@
+#![allow(clippy::uninlined_format_args)]
+
 use itertools::Itertools;
 use rand::prelude::*;
 
@@ -13,7 +15,6 @@ fn main() {
     let mut out: Output = Output::new(&input);
     annealing(&input, &mut maps, &mut out, &mut rng);
     write_output(&out);
-    eprintln!("score:{}", compute_score(&mut maps, &out));
 }
 
 fn annealing<T: Rng>(_input: &Input, maps: &mut [Vec<Vec<Square>>], out: &mut Output, rng: &mut T) {
@@ -52,6 +53,7 @@ fn annealing<T: Rng>(_input: &Input, maps: &mut [Vec<Vec<Square>>], out: &mut Ou
         }
     }
     *out = best_out;
+    eprintln!("score:{}", best_score);
 }
 
 #[derive(PartialEq, PartialOrd, Clone, Copy)]
