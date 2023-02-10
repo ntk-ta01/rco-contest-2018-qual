@@ -1,14 +1,57 @@
 use itertools::Itertools;
-// use rand::prelude::*;
+use rand::prelude::*;
+
+const TIMELIMIT: f64 = 3.9;
 
 const DIJ: [(usize, usize); 4] = [(0, !0), (!0, 0), (0, 1), (1, 0)];
 const DIR: [char; 4] = ['L', 'U', 'R', 'D'];
 
 fn main() {
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(0);
     let input = read_input();
-    let out: Output = Output::new(&input);
+    let mut maps = input.maps.clone();
+    let mut out: Output = Output::new(&input);
+    annealing(&input, &mut maps, &mut out, &mut rng);
     write_output(&out);
-    eprintln!("score:{}", compute_score(&mut input.maps.clone(), &out));
+    eprintln!("score:{}", compute_score(&mut maps, &out));
+}
+
+fn annealing<T: Rng>(_input: &Input, maps: &mut [Vec<Vec<Square>>], out: &mut Output, rng: &mut T) {
+    const T0: f64 = 100.0;
+    const T1: f64 = 0.01;
+    let mut temp;
+    let mut prob;
+    let mut now_score = compute_score(&mut maps.to_vec(), out);
+
+    let mut best_score = now_score;
+    let mut best_out = out.clone();
+
+    loop {
+        let passed = get_time() / TIMELIMIT;
+        if passed >= 1.0 {
+            break;
+        }
+        temp = T0.powf(1.0 - passed) * T1.powf(passed);
+
+        let mut new_out = out.clone();
+        // 近傍解作成
+        let change_com_i = rng.gen_range(0, out.commands.len());
+        let new_com = DIR[rng.gen_range(0, DIR.len())];
+        new_out.commands[change_com_i] = new_com;
+        // 近傍解作成ここまで
+        let new_score = compute_score(&mut maps.to_vec(), &new_out);
+        prob = f64::exp((new_score - now_score) as f64 / temp);
+        if now_score < new_score || rng.gen_bool(prob) {
+            now_score = new_score;
+            *out = new_out;
+        }
+
+        if best_score < now_score {
+            best_score = now_score;
+            best_out = out.clone();
+        }
+    }
+    *out = best_out;
 }
 
 #[derive(PartialEq, PartialOrd, Clone, Copy)]
@@ -68,6 +111,7 @@ fn read_input() -> Input {
     }
 }
 
+#[derive(Clone)]
 struct Output {
     maps: Vec<usize>,
     commands: Vec<char>,
@@ -97,7 +141,7 @@ fn compute_score(maps: &mut [Vec<Vec<Square>>], out: &Output) -> i64 {
                     Square::Empty => {}
                     Square::Player => unreachable!("プレイヤーが複数います"),
                 }
-                map[next_r][next_c] = Square::Empty;
+                map[player_r][player_c] = Square::Empty;
                 player_r = next_r;
                 player_c = next_c;
             }
@@ -122,24 +166,24 @@ fn write_output(out: &Output) {
     println!("{}", out.commands.iter().join(""));
 }
 
-// fn get_time() -> f64 {
-//     static mut STIME: f64 = -1.0;
-//     let t = std::time::SystemTime::now()
-//         .duration_since(std::time::UNIX_EPOCH)
-//         .unwrap();
-//     let ms = t.as_secs() as f64 + t.subsec_nanos() as f64 * 1e-9;
-//     unsafe {
-//         if STIME < 0.0 {
-//             STIME = ms;
-//         }
-//         // ローカル環境とジャッジ環境の実行速度差はget_timeで吸収しておくと便利
-//         #[cfg(feature = "local")]
-//         {
-//             (ms - STIME) * 1.0
-//         }
-//         #[cfg(not(feature = "local"))]
-//         {
-//             ms - STIME
-//         }
-//     }
-// }
+fn get_time() -> f64 {
+    static mut STIME: f64 = -1.0;
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap();
+    let ms = t.as_secs() as f64 + t.subsec_nanos() as f64 * 1e-9;
+    unsafe {
+        if STIME < 0.0 {
+            STIME = ms;
+        }
+        // ローカル環境とジャッジ環境の実行速度差はget_timeで吸収しておくと便利
+        #[cfg(feature = "local")]
+        {
+            (ms - STIME) * 1.0
+        }
+        #[cfg(not(feature = "local"))]
+        {
+            ms - STIME
+        }
+    }
+}
