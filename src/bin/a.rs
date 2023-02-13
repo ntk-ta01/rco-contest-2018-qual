@@ -2,19 +2,23 @@
 
 use itertools::Itertools;
 use rand::prelude::*;
+use std::collections::VecDeque;
 
 const TIMELIMIT: f64 = 3.9;
 
 const DIJ: [(usize, usize); 4] = [(0, !0), (!0, 0), (0, 1), (1, 0)];
 const DIR: [char; 4] = ['L', 'U', 'R', 'D'];
+const INF: i64 = 1_000_000_000_000;
 
 fn main() {
     let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(0);
     let input = read_input();
     let mut maps = input.maps.clone();
-    let mut out: Output = Output::new(&input);
+    let mut out = Output::new(&input);
+    greedy(&input, &maps, &mut out, &mut rng);
     annealing(&input, &mut maps, &mut out, &mut rng);
     write_output(&out);
+    // eprintln!("score:{}", compute_score(&mut maps.clone(), &out).0);
 }
 
 fn annealing<T: Rng>(_input: &Input, maps: &mut [Vec<Vec<Square>>], out: &mut Output, rng: &mut T) {
@@ -29,13 +33,14 @@ fn annealing<T: Rng>(_input: &Input, maps: &mut [Vec<Vec<Square>>], out: &mut Ou
 
     loop {
         let passed = get_time() / TIMELIMIT;
-        if passed >= 1.0 {
+        if 1.0 <= passed {
             break;
         }
         temp = T0.powf(1.0 - passed) * T1.powf(passed);
 
         let mut new_out = out.clone();
         // 近傍解作成
+        // コマンドをランダムに一文字変える
         let change_com_i = rng.gen_range(0, out.commands.len());
         let new_com = DIR[rng.gen_range(0, DIR.len())];
         new_out.commands[change_com_i] = new_com;
@@ -54,6 +59,67 @@ fn annealing<T: Rng>(_input: &Input, maps: &mut [Vec<Vec<Square>>], out: &mut Ou
     }
     *out = best_out;
     eprintln!("score:{}", best_score);
+}
+
+fn greedy<T: Rng>(input: &Input, maps: &[Vec<Vec<Square>>], out: &mut Output, _rng: &mut T) {
+    // k個のマップそれぞれでBFSして、発券したうちで最大の距離のパスをそのマップのコマンドとする
+    let mut commands = vec![];
+    for map in maps.iter() {
+        let mut prev_dir = vec![vec![!0; input.w]; input.h];
+        let mut dist = vec![vec![INF; input.w]; input.h];
+        let mut max_dist = 0;
+        let mut max_pos = find_player_position(map);
+        let mut que = VecDeque::new();
+        dist[max_pos.0][max_pos.1] = 0;
+        que.push_back(max_pos);
+        while !que.is_empty() {
+            let (ur, uc) = que.pop_front().unwrap();
+            for (dir, &(dr, dc)) in DIJ.iter().enumerate() {
+                let nr = ur + dr;
+                let nc = uc + dc;
+                match map[nr][nc] {
+                    Square::Wall => continue,
+                    Square::Trap => continue,
+                    Square::Coin => {
+                        if dist[nr][nc] != INF {
+                            continue;
+                        }
+                        dist[nr][nc] = dist[ur][uc] + 1;
+                        if max_dist < dist[nr][nc] {
+                            max_dist = dist[nr][nc];
+                            max_pos = (nr, nc);
+                        }
+                        prev_dir[nr][nc] = dir;
+                        que.push_back((nr, nc));
+                    }
+                    Square::Empty => unreachable!("存在しない空のマスに到達しています"),
+                    Square::Player => continue,
+                }
+            }
+        }
+        let mut pos = max_pos;
+        let mut command = vec![];
+        while prev_dir[pos.0][pos.1] != !0 {
+            command.push(DIR[prev_dir[pos.0][pos.1]]);
+            let dir = (prev_dir[pos.0][pos.1] + 2) % 4; // 一つ前のマスに戻る進行方向に変換する
+            pos.0 += DIJ[dir].0;
+            pos.1 += DIJ[dir].1;
+        }
+        command.reverse(); // 最後のマスから最初のマスの順になっているので反転
+        commands.push(command);
+    }
+    // n個のマップからコマンドの長い順にk個のマップを選ぶ
+    let mut maps = (0..input.n).collect_vec();
+    maps.sort_by_key(|&k| std::cmp::Reverse(commands[k].len()));
+    for (i, &k) in maps.iter().enumerate().take(input.k) {
+        out.maps[i] = k;
+    }
+    // n個のコマンドから最長のコマンドを選ぶ
+    let commands_i = maps[0];
+    out.commands = std::mem::take(&mut commands[commands_i]);
+    while out.commands.len() < input.t {
+        out.commands.push('L');
+    }
 }
 
 #[derive(PartialEq, PartialOrd, Clone, Copy)]
@@ -127,27 +193,33 @@ impl Output {
     }
 }
 
+fn compute_map_score(map: &mut [Vec<Square>], out: &Output) -> i64 {
+    let (mut player_r, mut player_c) = find_player_position(map);
+    let mut score = 0;
+    for &ch in out.commands.iter() {
+        if let Some(d) = DIR.iter().position(|dir_c| *dir_c == ch) {
+            let next_r = player_r + DIJ[d].0;
+            let next_c = player_c + DIJ[d].1;
+            match map[next_r][next_c] {
+                Square::Wall => continue,
+                Square::Trap => break,
+                Square::Coin => score += 1,
+                Square::Empty => {}
+                Square::Player => unreachable!("プレイヤーが複数います"),
+            }
+            map[player_r][player_c] = Square::Empty;
+            player_r = next_r;
+            player_c = next_c;
+        }
+    }
+    score
+}
+
 fn compute_score(maps: &mut [Vec<Vec<Square>>], out: &Output) -> i64 {
     let mut score = 0;
-    for &k in out.maps.iter() {
+    for &k in out.maps.iter().take(1) {
         let map = &mut maps[k];
-        let (mut player_r, mut player_c) = find_player_position(map);
-        for &ch in out.commands.iter() {
-            if let Some(d) = DIR.iter().position(|dir_c| *dir_c == ch) {
-                let next_r = player_r + DIJ[d].0;
-                let next_c = player_c + DIJ[d].1;
-                match map[next_r][next_c] {
-                    Square::Wall => continue,
-                    Square::Trap => break,
-                    Square::Coin => score += 1,
-                    Square::Empty => {}
-                    Square::Player => unreachable!("プレイヤーが複数います"),
-                }
-                map[player_r][player_c] = Square::Empty;
-                player_r = next_r;
-                player_c = next_c;
-            }
-        }
+        score += compute_map_score(map, out);
     }
     score
 }
