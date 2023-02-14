@@ -12,10 +12,10 @@ const DIR: [char; 4] = ['L', 'U', 'R', 'D'];
 fn main() {
     // let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(0);
     let input = read_input();
-    let maps = input.maps.clone();
+    let mut maps = input.maps.clone();
     let out = beam_search(&input, &maps);
     write_output(&out);
-    // eprintln!("score:{}", compute_score(&mut maps, &out));
+    eprintln!("score:{}", compute_score(&mut maps, &out));
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -43,11 +43,50 @@ impl State {
             captured,
         }
     }
+
+    fn convert_next_state(item: NextState, mut prev_state: State) -> Self {
+        for (k, map) in prev_state.maps.iter_mut().enumerate() {
+            if prev_state.captured[k] {
+                continue;
+            }
+            let (player_r, player_c) = &mut prev_state.poses[k];
+            let next_r = *player_r + DIJ[item.dir].0;
+            let next_c = *player_c + DIJ[item.dir].1;
+            match map[next_r][next_c] {
+                Square::Wall => continue,
+                Square::Trap => prev_state.captured[k] = true,
+                Square::Coin => prev_state.score += 1,
+                Square::Empty => {}
+                Square::Player => unreachable!("プレイヤーが複数います"),
+            }
+            map[*player_r][*player_c] = Square::Empty;
+            map[next_r][next_c] = Square::Player;
+            *player_r = next_r;
+            *player_c = next_c;
+        }
+        prev_state.commands.push(DIR[item.dir]);
+        prev_state
+    }
 }
 
-// まずはnaiveに
+struct NextState {
+    score: i64,
+    prev_index: usize,
+    dir: usize,
+}
+
+impl NextState {
+    fn new(score: i64, prev_index: usize, dir: usize) -> Self {
+        NextState {
+            score,
+            prev_index,
+            dir,
+        }
+    }
+}
+
 fn beam_search(input: &Input, maps: &[Vec<Vec<Square>>]) -> Output {
-    const BEAM_WIDTH: usize = 10;
+    const BEAM_WIDTH: usize = 100;
     let mut states = vec![State::new(
         0,
         maps.iter().take(input.k).cloned().collect(),
@@ -56,43 +95,37 @@ fn beam_search(input: &Input, maps: &[Vec<Vec<Square>>]) -> Output {
         vec![false; input.k],
     )];
     for _ in 0..input.t {
-        if BEAM_WIDTH < states.len() {
-            states.sort_by_key(|state| std::cmp::Reverse(state.score));
-            states = states[..BEAM_WIDTH].to_vec();
-        }
-        let mut new_states = vec![];
-        while !states.is_empty() {
-            let state = states.pop().unwrap();
+        let mut next_states = vec![];
+        for (i, state) in states.iter().enumerate().rev() {
             for (dir, &(dr, dc)) in DIJ.iter().enumerate() {
                 let mut score = state.score;
-                let mut maps = state.maps.clone();
-                let mut poses = state.poses.clone();
-                let mut commands = state.commands.clone();
-                let mut captured = state.captured.clone();
-                for (k, map) in maps.iter_mut().enumerate() {
-                    if captured[k] {
+                for (k, map) in state.maps.iter().enumerate() {
+                    if state.captured[k] {
                         continue;
                     }
-                    let (player_r, player_c) = &mut poses[k];
+                    let (player_r, player_c) = &state.poses[k];
                     let next_r = *player_r + dr;
                     let next_c = *player_c + dc;
-                    match map[next_r][next_c] {
-                        Square::Wall => continue,
-                        Square::Trap => captured[k] = true,
-                        Square::Coin => score += 1,
-                        Square::Empty => {}
-                        Square::Player => unreachable!("プレイヤーが複数います"),
+                    if map[next_r][next_c] == Square::Coin {
+                        score += 1;
                     }
-                    map[*player_r][*player_c] = Square::Empty;
-                    map[next_r][next_c] = Square::Player;
-                    *player_r = next_r;
-                    *player_c = next_c;
                 }
-                commands.push(DIR[dir]);
-                new_states.push(State::new(score, maps, poses, commands, captured));
+                next_states.push(NextState::new(score, i, dir));
             }
         }
-        states = new_states;
+
+        if BEAM_WIDTH < next_states.len() {
+            next_states.sort_by_key(|next_state| std::cmp::Reverse(next_state.score));
+            next_states.truncate(BEAM_WIDTH);
+        }
+        let next_states = next_states
+            .into_iter()
+            .map(|item| {
+                let prev_state = states[item.prev_index].clone();
+                State::convert_next_state(item, prev_state)
+            })
+            .collect();
+        states = next_states;
     }
     let best_state = states.into_iter().max().unwrap();
     Output::new((0..input.k).collect(), best_state.commands)
