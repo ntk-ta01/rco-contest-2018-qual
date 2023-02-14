@@ -22,6 +22,7 @@ fn main() {
 struct State {
     score: i64,
     maps: Vec<Vec<Vec<Square>>>,
+    poses: Vec<(usize, usize)>,
     commands: Vec<char>,
     captured: Vec<bool>,
 }
@@ -30,12 +31,14 @@ impl State {
     fn new(
         score: i64,
         maps: Vec<Vec<Vec<Square>>>,
+        poses: Vec<(usize, usize)>,
         commands: Vec<char>,
         captured: Vec<bool>,
     ) -> Self {
         State {
             score,
             maps,
+            poses,
             commands,
             captured,
         }
@@ -48,6 +51,7 @@ fn beam_search(input: &Input, maps: &[Vec<Vec<Square>>]) -> Output {
     let mut states = vec![State::new(
         0,
         maps.iter().take(input.k).cloned().collect(),
+        maps.iter().map(|map| find_player_position(map)).collect(),
         vec![],
         vec![false; input.k],
     )];
@@ -62,15 +66,16 @@ fn beam_search(input: &Input, maps: &[Vec<Vec<Square>>]) -> Output {
             for (dir, &(dr, dc)) in DIJ.iter().enumerate() {
                 let mut score = state.score;
                 let mut maps = state.maps.clone();
+                let mut poses = state.poses.clone();
                 let mut commands = state.commands.clone();
                 let mut captured = state.captured.clone();
                 for (k, map) in maps.iter_mut().enumerate() {
                     if captured[k] {
                         continue;
                     }
-                    let (player_r, player_c) = find_player_position(map);
-                    let next_r = player_r + dr;
-                    let next_c = player_c + dc;
+                    let (player_r, player_c) = &mut poses[k];
+                    let next_r = *player_r + dr;
+                    let next_c = *player_c + dc;
                     match map[next_r][next_c] {
                         Square::Wall => continue,
                         Square::Trap => captured[k] = true,
@@ -78,11 +83,13 @@ fn beam_search(input: &Input, maps: &[Vec<Vec<Square>>]) -> Output {
                         Square::Empty => {}
                         Square::Player => unreachable!("プレイヤーが複数います"),
                     }
-                    map[player_r][player_c] = Square::Empty;
+                    map[*player_r][*player_c] = Square::Empty;
                     map[next_r][next_c] = Square::Player;
+                    *player_r = next_r;
+                    *player_c = next_c;
                 }
                 commands.push(DIR[dir]);
-                new_states.push(State::new(score, maps, commands, captured));
+                new_states.push(State::new(score, maps, poses, commands, captured));
             }
         }
         states = new_states;
