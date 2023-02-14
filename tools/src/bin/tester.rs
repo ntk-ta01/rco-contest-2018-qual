@@ -28,7 +28,7 @@ fn main() {
     pb.set_style(sty);
     let pb = Arc::new(Mutex::new(pb));
 
-    let pool = ThreadPool::new(1);
+    let pool = ThreadPool::new(12);
     let total_score = Arc::new(Mutex::new(0));
     let mut case_num = 0_i64;
     for file in files {
