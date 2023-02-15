@@ -28,8 +28,6 @@ struct State {
     score: i64,
     maps: Vec<Vec<Vec<Square>>>,
     poses: Vec<(usize, usize)>,
-    // commands: Vec<char>,
-    crashed: Vec<usize>, // 壁にぶつかった回数
     captured: Vec<usize>,
     turn: usize,
 }
@@ -39,17 +37,13 @@ impl State {
         score: i64,
         maps: Vec<Vec<Vec<Square>>>,
         poses: Vec<(usize, usize)>,
-        // commands: Vec<char>,
-        crashed: Vec<usize>,
         captured: Vec<usize>,
     ) -> Self {
         State {
             score,
             maps,
             poses,
-            // commands,
             captured,
-            crashed,
             turn: 0,
         }
     }
@@ -65,7 +59,7 @@ impl State {
             let next_r = *player_r + DIJ[act.dir].0;
             let next_c = *player_c + DIJ[act.dir].1;
             match map[next_r][next_c] {
-                Square::Wall => self.crashed[k] += 1,
+                Square::Wall => continue,
                 Square::Trap => self.captured[k] = 1,
                 Square::Coin => {
                     self.score += 1;
@@ -89,8 +83,6 @@ impl State {
             if !act.is_move_successed[k] {
                 if self.captured[k] > 0 {
                     self.captured[k] -= 1;
-                } else if self.crashed[k] > 0 {
-                    self.crashed[k] -= 1;
                 }
                 continue;
             }
@@ -169,30 +161,6 @@ struct BeamSearchTree {
 
 impl BeamSearchTree {
     fn dfs(&mut self, next_states: &mut Vec<NextState>, target_turn: usize, is_single_path: bool) {
-        // デバッグ用
-        // eprintln!(
-        //     "{} / {} | {}",
-        //     self.state.turn,
-        //     target_turn,
-        //     self.state.commands.iter().collect::<String>()
-        // );
-        // {
-        // 　　　// self.states.poses[k]の初期位置を見て入れる kはfailしたときのmap番号
-        //     let (player_r, player_c) = (_, _);
-        //     for r in player_r - 1..=player_r + 1 {
-        //         for c in player_c - 1..=player_c + 1 {
-        //             let ch = match self.state.maps[k][r][c] {
-        //                 Square::Player => '@',
-        //                 Square::Coin => 'o',
-        //                 Square::Trap => 'x',
-        //                 Square::Wall => '#',
-        //                 Square::Empty => '_',
-        //             };
-        //             eprint!("{ch}");
-        //         }
-        //         eprintln!();
-        //     }
-        // }
         if self.state.turn == target_turn {
             for (dir, &(dr, dc)) in DIJ.iter().enumerate() {
                 let mut score = self.head.score;
@@ -238,13 +206,11 @@ impl BeamSearchTree {
 
                         self.head = child.upgrade().unwrap();
                         self.state.apply(act);
-                        // self.state.commands.push(DIR[act.dir]);
 
                         self.dfs(next_states, target_turn, next_is_single_path);
 
                         if !next_is_single_path {
                             self.state.revert(act);
-                            // self.state.commands.pop();
                         }
                     }
                     next_is_single_path
@@ -266,8 +232,6 @@ fn beam_search(input: &Input, maps: &[Vec<Vec<Square>>]) -> Output {
             0,
             maps.iter().take(input.k).cloned().collect(),
             maps.iter().map(|map| find_player_position(map)).collect(),
-            // vec![],
-            vec![0; input.k],
             vec![0; input.k],
         );
         let head = Rc::new(Node::new(0, None));
