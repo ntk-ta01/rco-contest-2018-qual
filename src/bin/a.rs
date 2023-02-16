@@ -6,16 +6,11 @@ use std::{
 };
 
 use itertools::Itertools;
-// use rand::prelude::*;
-
-// const TIMELIMIT: f64 = 3.9;
 
 const DIJ: [(usize, usize); 4] = [(0, !0), (!0, 0), (0, 1), (1, 0)];
 const DIR: [char; 4] = ['L', 'U', 'R', 'D'];
-// const INF: i64 = 1_000_000_000_000;
 
 fn main() {
-    // let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(0);
     let input = read_input();
     let maps = input.maps.clone();
     let out = beam_search(&input, &maps);
@@ -398,27 +393,4 @@ fn find_player_position(map: &[Vec<Square>]) -> (usize, usize) {
 fn write_output(out: &Output) {
     println!("{}", out.maps.iter().join(" "));
     println!("{}", out.commands.iter().join(""));
-}
-
-#[allow(dead_code)]
-fn get_time() -> f64 {
-    static mut STIME: f64 = -1.0;
-    let t = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap();
-    let ms = t.as_secs() as f64 + t.subsec_nanos() as f64 * 1e-9;
-    unsafe {
-        if STIME < 0.0 {
-            STIME = ms;
-        }
-        // ローカル環境とジャッジ環境の実行速度差はget_timeで吸収しておくと便利
-        #[cfg(feature = "local")]
-        {
-            (ms - STIME) * 1.0
-        }
-        #[cfg(not(feature = "local"))]
-        {
-            ms - STIME
-        }
-    }
 }
