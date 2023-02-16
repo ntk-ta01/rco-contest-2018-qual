@@ -18,7 +18,7 @@ fn main() {
     // eprintln!("score:{}", compute_score(&mut maps, &out));
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone)]
 struct State {
     score: i64,
     maps: Vec<Vec<Vec<Square>>>,
