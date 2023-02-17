@@ -68,7 +68,7 @@ fn beam_search(input: &Input, map_ids: Vec<usize>) -> Output {
     const BEAM_WIDTH: usize = 1000;
     let mut tree = {
         let state = State::new(input, map_ids.clone());
-        let head = Rc::new(Node::new(0, None));
+        let head = Rc::new(Node::new(None));
         BeamSearchTree { state, head }
     };
     let mut current_queue = vec![tree.head.clone()];
@@ -95,7 +95,7 @@ fn beam_search(input: &Input, map_ids: Vec<usize>) -> Output {
             if !hash_set.insert(candidate.hash) {
                 continue;
             }
-            let child = Node::new(candidate.score, Some(candidate.parent.clone()));
+            let child = Node::new(Some(candidate.parent.clone()));
             let child_ptr = Rc::new(child);
             let children = &mut candidate.parent.children.borrow_mut();
             children.push((candidate.act, Rc::downgrade(&child_ptr)));
@@ -239,19 +239,14 @@ impl Candidate {
 }
 
 struct Node {
-    score: i32,
     parent: Option<Rc<Node>>,
     children: RefCell<Vec<(Action, Weak<Node>)>>,
 }
 
 impl Node {
-    fn new(score: i32, parent: Option<Rc<Node>>) -> Self {
+    fn new(parent: Option<Rc<Node>>) -> Self {
         let children = RefCell::new(vec![]);
-        Self {
-            score,
-            parent,
-            children,
-        }
+        Self { parent, children }
     }
 }
 
