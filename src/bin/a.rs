@@ -14,10 +14,10 @@ const DIR: [char; 4] = ['L', 'U', 'R', 'D'];
 
 fn main() {
     let (input, maps) = read_input();
-    let (map_ids, mut maps) = select_maps(&input, maps);
+    let (map_ids, maps) = select_maps(&input, maps);
     let out = beam_search(&input, map_ids, &maps);
     write_output(&out);
-    eprintln!("score:{}", compute_score(&mut maps, &out));
+    // eprintln!("score:{}", compute_score(&mut maps, &out));
 }
 
 // k個のマップを選ぶ
