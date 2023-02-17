@@ -235,6 +235,8 @@ impl BeamSearchTree {
                         is_moved.set(k, true);
                     }
                 }
+                // next_turnが+1じゃないアクションが存在する問題のために
+                // 下のif文を書いたり、beam_queueの長さをinput.t+1にする
                 let next_turn = self.state.turn + 1;
                 if next_turn < beam_queue.len() {
                     beam_queue[next_turn].push(Candidate::new(
