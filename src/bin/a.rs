@@ -134,7 +134,7 @@ struct State {
     score: i32,
     maps: Vec<Vec<Vec<Square>>>,
     poses: Vec<(usize, usize)>,
-    captured: Vec<usize>,
+    visited: Vec<Vec<Vec<bool>>>,
     turn: usize,
     hash: u64,
 }
@@ -142,16 +142,19 @@ struct State {
 impl State {
     fn new(input: &Input, maps: Vec<Vec<Vec<Square>>>) -> Self {
         let poses: Vec<(usize, usize)> = maps.iter().map(|map| find_player_position(map)).collect();
-        let captured = vec![0; maps.len()];
         let mut hash = 0;
         for (i, &(r, c)) in poses.iter().enumerate() {
             hash ^= input.player_hashes[i][r][c];
+        }
+        let mut visited = vec![vec![vec![false; input.w]; input.h]; input.k];
+        for (k, &(r, c)) in poses.iter().enumerate() {
+            visited[k][r][c] = true;
         }
         State {
             score: 0,
             maps,
             poses,
-            captured,
+            visited,
             turn: 0,
             hash,
         }
@@ -159,63 +162,36 @@ impl State {
 
     fn apply(&mut self, act: &Action) {
         self.turn += 1;
+        self.score += act.score_diff;
         self.hash ^= act.hash_diff;
-        for (k, map) in self.maps.iter_mut().enumerate() {
-            if self.captured[k] > 0 {
-                self.captured[k] += 1;
-                continue;
-            }
-            let (player_r, player_c) = &mut self.poses[k];
+        for (k, (player_r, player_c)) in self.poses.iter_mut().enumerate() {
             let next_r = *player_r + DIJ[act.dir].0;
             let next_c = *player_c + DIJ[act.dir].1;
-            match map[next_r][next_c] {
-                Square::Wall => continue,
-                Square::Trap => self.captured[k] = 1,
-                Square::Coin => {
-                    self.score += 1;
-                }
-                Square::Empty => {}
-                Square::Player => unreachable!("プレイヤーが複数います"),
-            }
             if act.is_moved[k] {
-                map[*player_r][*player_c] = Square::Empty;
-                map[next_r][next_c] = Square::Player;
                 *player_r = next_r;
                 *player_c = next_c;
+            }
+            if act.is_new_visited[k] {
+                self.visited[k][*player_r][*player_c] = true;
             }
         }
     }
 
     fn revert(&mut self, act: &Action) {
         self.turn -= 1;
+        self.score -= act.score_diff;
         self.hash ^= act.hash_diff;
         let rev_dir = (act.dir + 2) % 4;
-        for (k, map) in self.maps.iter_mut().enumerate() {
-            if !act.is_moved[k] {
-                if self.captured[k] > 0 {
-                    self.captured[k] -= 1;
-                }
-                continue;
-            }
-            let (player_r, player_c) = &mut self.poses[k];
+        for (k, (player_r, player_c)) in self.poses.iter_mut().enumerate() {
             let prev_r = *player_r + DIJ[rev_dir].0;
             let prev_c = *player_c + DIJ[rev_dir].1;
-            match map[prev_r][prev_c] {
-                Square::Wall => unreachable!("壁にぶつかるように戻っています"),
-                Square::Trap => unreachable!("罠にぶつかるように戻っています"),
-                Square::Coin => unreachable!("コインを取っていないマスに戻っています"),
-                Square::Empty => {}
-                Square::Player => unreachable!("プレイヤーが複数います"),
+            if act.is_new_visited[k] {
+                self.visited[k][*player_r][*player_c] = false;
             }
-            if act.is_gained[k] {
-                self.score -= 1;
-                map[*player_r][*player_c] = Square::Coin;
-            } else {
-                map[*player_r][*player_c] = Square::Empty;
+            if act.is_moved[k] {
+                *player_r = prev_r;
+                *player_c = prev_c;
             }
-            map[prev_r][prev_c] = Square::Player;
-            *player_r = prev_r;
-            *player_c = prev_c;
         }
     }
 }
@@ -223,16 +199,24 @@ impl State {
 struct Action {
     dir: usize,
     is_moved: FixedBitSet,
-    is_gained: FixedBitSet,
+    is_new_visited: FixedBitSet,
+    score_diff: i32,
     hash_diff: u64,
 }
 
 impl Action {
-    fn new(dir: usize, is_moved: FixedBitSet, is_gained: FixedBitSet, hash_diff: u64) -> Self {
+    fn new(
+        dir: usize,
+        is_moved: FixedBitSet,
+        is_new_visited: FixedBitSet,
+        score_diff: i32,
+        hash_diff: u64,
+    ) -> Self {
         Action {
             dir,
             is_moved,
-            is_gained,
+            is_new_visited,
+            score_diff,
             hash_diff,
         }
     }
@@ -288,24 +272,27 @@ impl BeamSearchTree {
     ) {
         if self.state.turn == target_turn {
             for (dir, &(dr, dc)) in DIJ.iter().enumerate() {
-                let mut score = self.head.score;
+                let mut score_diff = 0;
                 let mut is_moved = FixedBitSet::with_capacity(self.state.maps.len());
-                let mut is_gained = FixedBitSet::with_capacity(self.state.maps.len());
+                let mut is_new_visited = FixedBitSet::with_capacity(self.state.maps.len());
                 let mut hash_diff = 0;
                 for (k, map) in self.state.maps.iter().enumerate() {
-                    if self.state.captured[k] > 0 {
-                        continue;
-                    }
                     let (player_r, player_c) = &self.state.poses[k];
                     let next_r = *player_r + dr;
                     let next_c = *player_c + dc;
-                    if map[next_r][next_c] == Square::Coin {
-                        score += 1;
-                        is_gained.set(k, true);
-                        is_moved.set(k, true);
+                    if map[*player_r][*player_c] == Square::Trap
+                        || map[next_r][next_c] == Square::Wall
+                    {
+                        continue;
                     }
-                    if map[next_r][next_c] == Square::Empty {
-                        is_moved.set(k, true);
+                    is_moved.set(k, true);
+                    if !self.state.visited[k][next_r][next_c] {
+                        is_new_visited.set(k, true);
+                        if map[next_r][next_c] == Square::Coin {
+                            score_diff += 1;
+                        } else if map[next_r][next_c] == Square::Trap {
+                            // score_diff -= (input.t - self.state.turn) as i32 / 2;
+                        }
                     }
                     hash_diff ^= input.player_hashes[k][*player_r][*player_c];
                     hash_diff ^= input.player_hashes[k][next_r][next_c];
@@ -315,9 +302,9 @@ impl BeamSearchTree {
                 let next_turn = self.state.turn + 1;
                 if next_turn < beam_queue.len() {
                     beam_queue[next_turn].push(Candidate::new(
-                        score,
+                        self.state.score + score_diff,
                         self.head.clone(),
-                        Action::new(dir, is_moved, is_gained, hash_diff),
+                        Action::new(dir, is_moved, is_new_visited, score_diff, hash_diff),
                         self.state.hash ^ hash_diff,
                     ));
                 }
