@@ -2,6 +2,8 @@
 
 use fixedbitset::FixedBitSet;
 use itertools::Itertools;
+use rand::prelude::*;
+use rustc_hash::FxHashSet;
 use std::{
     cell::RefCell,
     rc::{Rc, Weak},
@@ -20,14 +22,15 @@ fn main() {
 fn beam_search(input: &Input, maps: &[Vec<Vec<Square>>]) -> Output {
     const BEAM_WIDTH: usize = 1000;
     let mut tree = {
-        let state = State::new(maps.iter().take(input.k).cloned().collect());
+        let state = State::new(input, maps.iter().take(input.k).cloned().collect());
         let head = Rc::new(Node::new(0, None));
         BeamSearchTree { state, head }
     };
     let mut current_queue = vec![tree.head.clone()];
     let mut beam_queue = (0..input.t + 1).map(|_| vec![]).collect_vec();
+    let mut hash_set = FxHashSet::default();
     for turn in 0..input.t {
-        tree.dfs(&mut beam_queue, turn, true);
+        tree.dfs(input, &mut beam_queue, turn, true);
         current_queue.clear();
         if turn + 1 == input.t {
             // 最終ターンなのでcandidatesを作らない
@@ -41,7 +44,12 @@ fn beam_search(input: &Input, maps: &[Vec<Vec<Square>>]) -> Output {
             });
             candidates.truncate(BEAM_WIDTH);
         }
+        hash_set.clear();
         for candidate in candidates {
+            // プレイヤーの位置が同じ候補を重複除去
+            if !hash_set.insert(candidate.hash) {
+                continue;
+            }
             let child = Node::new(candidate.score, Some(candidate.parent.clone()));
             let child_ptr = Rc::new(child);
             let children = &mut candidate.parent.children.borrow_mut();
@@ -81,23 +89,30 @@ struct State {
     poses: Vec<(usize, usize)>,
     captured: Vec<usize>,
     turn: usize,
+    hash: u64,
 }
 
 impl State {
-    fn new(maps: Vec<Vec<Vec<Square>>>) -> Self {
-        let poses = maps.iter().map(|map| find_player_position(map)).collect();
+    fn new(input: &Input, maps: Vec<Vec<Vec<Square>>>) -> Self {
+        let poses: Vec<(usize, usize)> = maps.iter().map(|map| find_player_position(map)).collect();
         let captured = vec![0; maps.len()];
+        let mut hash = 0;
+        for (i, &(r, c)) in poses.iter().enumerate() {
+            hash ^= input.player_hashes[i][r][c];
+        }
         State {
             score: 0,
             maps,
             poses,
             captured,
             turn: 0,
+            hash,
         }
     }
 
     fn apply(&mut self, act: &Action) {
         self.turn += 1;
+        self.hash ^= act.hash_diff;
         for (k, map) in self.maps.iter_mut().enumerate() {
             if self.captured[k] > 0 {
                 self.captured[k] += 1;
@@ -126,6 +141,7 @@ impl State {
 
     fn revert(&mut self, act: &Action) {
         self.turn -= 1;
+        self.hash ^= act.hash_diff;
         let rev_dir = (act.dir + 2) % 4;
         for (k, map) in self.maps.iter_mut().enumerate() {
             if !act.is_moved[k] {
@@ -161,14 +177,16 @@ struct Action {
     dir: usize,
     is_moved: FixedBitSet,
     is_gained: FixedBitSet,
+    hash_diff: u64,
 }
 
 impl Action {
-    fn new(dir: usize, is_moved: FixedBitSet, is_gained: FixedBitSet) -> Self {
+    fn new(dir: usize, is_moved: FixedBitSet, is_gained: FixedBitSet, hash_diff: u64) -> Self {
         Action {
             dir,
             is_moved,
             is_gained,
+            hash_diff,
         }
     }
 }
@@ -177,11 +195,17 @@ struct Candidate {
     score: i32,
     parent: Rc<Node>,
     act: Action,
+    hash: u64,
 }
 
 impl Candidate {
-    fn new(score: i32, parent: Rc<Node>, act: Action) -> Self {
-        Candidate { score, parent, act }
+    fn new(score: i32, parent: Rc<Node>, act: Action, hash: u64) -> Self {
+        Candidate {
+            score,
+            parent,
+            act,
+            hash,
+        }
     }
 }
 
@@ -210,6 +234,7 @@ struct BeamSearchTree {
 impl BeamSearchTree {
     fn dfs(
         &mut self,
+        input: &Input,
         beam_queue: &mut Vec<Vec<Candidate>>,
         target_turn: usize,
         is_single_path: bool,
@@ -219,6 +244,7 @@ impl BeamSearchTree {
                 let mut score = self.head.score;
                 let mut is_moved = FixedBitSet::with_capacity(self.state.maps.len());
                 let mut is_gained = FixedBitSet::with_capacity(self.state.maps.len());
+                let mut hash_diff = 0;
                 for (k, map) in self.state.maps.iter().enumerate() {
                     if self.state.captured[k] > 0 {
                         continue;
@@ -234,6 +260,8 @@ impl BeamSearchTree {
                     if map[next_r][next_c] == Square::Empty {
                         is_moved.set(k, true);
                     }
+                    hash_diff ^= input.player_hashes[k][*player_r][*player_c];
+                    hash_diff ^= input.player_hashes[k][next_r][next_c];
                 }
                 // next_turnが+1じゃないアクションが存在する問題のために
                 // 下のif文を書いたり、beam_queueの長さをinput.t+1にする
@@ -242,7 +270,8 @@ impl BeamSearchTree {
                     beam_queue[next_turn].push(Candidate::new(
                         score,
                         self.head.clone(),
-                        Action::new(dir, is_moved, is_gained),
+                        Action::new(dir, is_moved, is_gained, hash_diff),
+                        self.state.hash ^ hash_diff,
                     ));
                 }
             }
@@ -265,7 +294,7 @@ impl BeamSearchTree {
                         self.head = child.upgrade().unwrap();
                         self.state.apply(act);
 
-                        self.dfs(beam_queue, target_turn, next_is_single_path);
+                        self.dfs(input, beam_queue, target_turn, next_is_single_path);
 
                         if !next_is_single_path {
                             self.state.revert(act);
@@ -299,6 +328,7 @@ struct Input {
     h: usize,
     w: usize,
     t: usize,
+    player_hashes: Vec<Vec<Vec<u64>>>,
 }
 
 fn read_input() -> (Input, Vec<Vec<Vec<Square>>>) {
@@ -329,7 +359,26 @@ fn read_input() -> (Input, Vec<Vec<Vec<Square>>>) {
                 .collect()
         })
         .collect();
-    (Input { n, k, h, w, t }, maps)
+    let mut player_hashes = vec![vec![vec![0; w]; h]; k];
+    let mut rng = rand_pcg::Pcg64Mcg::new(0);
+    for player_hash in player_hashes.iter_mut() {
+        for row in player_hash.iter_mut() {
+            for h in row.iter_mut() {
+                *h = rng.gen();
+            }
+        }
+    }
+    (
+        Input {
+            n,
+            k,
+            h,
+            w,
+            t,
+            player_hashes,
+        },
+        maps,
+    )
 }
 
 #[derive(Clone)]
