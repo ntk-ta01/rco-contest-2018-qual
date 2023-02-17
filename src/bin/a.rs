@@ -18,6 +18,63 @@ fn main() {
     // eprintln!("score:{}", compute_score(&mut maps, &out));
 }
 
+fn beam_search(input: &Input, maps: &[Vec<Vec<Square>>]) -> Output {
+    const BEAM_WIDTH: usize = 1000;
+    let mut tree = {
+        let state = State::new(maps.iter().take(input.k).cloned().collect());
+        let head = Rc::new(Node::new(0, None));
+        BeamSearchTree { state, head }
+    };
+    let mut current_queue = vec![tree.head.clone()];
+    let mut beam_queue = (0..input.t + 1).map(|_| vec![]).collect_vec();
+    for turn in 0..input.t {
+        tree.dfs(&mut beam_queue, turn, true);
+        current_queue.clear();
+        if turn + 1 == input.t {
+            // 最終ターンなのでcandidatesを作らない
+            break;
+        }
+        let mut candidates = vec![];
+        std::mem::swap(&mut candidates, &mut beam_queue[turn + 1]);
+        if candidates.len() > BEAM_WIDTH {
+            selection::select_nth_unstable_by_key(&mut candidates, BEAM_WIDTH - 1, |c| {
+                std::cmp::Reverse(c.score)
+            });
+            candidates.truncate(BEAM_WIDTH);
+        }
+        for candidate in candidates {
+            let child = Node::new(candidate.score, Some(candidate.parent.clone()));
+            let child_ptr = Rc::new(child);
+            let children = &mut candidate.parent.children.borrow_mut();
+            children.push((candidate.act, Rc::downgrade(&child_ptr)));
+            current_queue.push(child_ptr);
+        }
+    }
+    let last_candidates = beam_queue.pop().unwrap();
+    let best_candidate = last_candidates
+        .into_iter()
+        .max_by_key(|state| state.score)
+        .unwrap();
+
+    // 復元
+    let mut commands = vec![DIR[best_candidate.act.dir]];
+    commands.reserve(input.t);
+    let mut parent = best_candidate.parent;
+    while let Some(p) = parent.parent.clone() {
+        {
+            let children = &mut p.children.borrow_mut();
+            let (act, _) = children
+                .iter()
+                .find(|(_, child)| child.upgrade().is_some())
+                .unwrap();
+            commands.push(DIR[act.dir]);
+        }
+        parent = p;
+    }
+    commands.reverse();
+    Output::new((0..input.k).collect(), commands)
+}
+
 #[derive(Clone)]
 struct State {
     score: i32,
@@ -223,63 +280,6 @@ impl BeamSearchTree {
             }
         }
     }
-}
-
-fn beam_search(input: &Input, maps: &[Vec<Vec<Square>>]) -> Output {
-    const BEAM_WIDTH: usize = 1000;
-    let mut tree = {
-        let state = State::new(maps.iter().take(input.k).cloned().collect());
-        let head = Rc::new(Node::new(0, None));
-        BeamSearchTree { state, head }
-    };
-    let mut current_queue = vec![tree.head.clone()];
-    let mut beam_queue = (0..input.t + 1).map(|_| vec![]).collect_vec();
-    for turn in 0..input.t {
-        tree.dfs(&mut beam_queue, turn, true);
-        current_queue.clear();
-        if turn + 1 == input.t {
-            // 最終ターンなのでcandidatesを作らない
-            break;
-        }
-        let mut candidates = vec![];
-        std::mem::swap(&mut candidates, &mut beam_queue[turn + 1]);
-        if candidates.len() > BEAM_WIDTH {
-            selection::select_nth_unstable_by_key(&mut candidates, BEAM_WIDTH - 1, |c| {
-                std::cmp::Reverse(c.score)
-            });
-            candidates.truncate(BEAM_WIDTH);
-        }
-        for candidate in candidates {
-            let child = Node::new(candidate.score, Some(candidate.parent.clone()));
-            let child_ptr = Rc::new(child);
-            let children = &mut candidate.parent.children.borrow_mut();
-            children.push((candidate.act, Rc::downgrade(&child_ptr)));
-            current_queue.push(child_ptr);
-        }
-    }
-    let last_candidates = beam_queue.pop().unwrap();
-    let best_candidate = last_candidates
-        .into_iter()
-        .max_by_key(|state| state.score)
-        .unwrap();
-
-    // 復元
-    let mut commands = vec![DIR[best_candidate.act.dir]];
-    commands.reserve(input.t);
-    let mut parent = best_candidate.parent;
-    while let Some(p) = parent.parent.clone() {
-        {
-            let children = &mut p.children.borrow_mut();
-            let (act, _) = children
-                .iter()
-                .find(|(_, child)| child.upgrade().is_some())
-                .unwrap();
-            commands.push(DIR[act.dir]);
-        }
-        parent = p;
-    }
-    commands.reverse();
-    Output::new((0..input.k).collect(), commands)
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
