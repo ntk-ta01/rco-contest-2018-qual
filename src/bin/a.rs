@@ -45,7 +45,6 @@ fn select_maps(
 
 fn dfs(input: &Input, s: (usize, usize), map: &[Vec<Square>]) -> i32 {
     let mut coins = 0;
-    let mut traps = 0;
     let mut stack = vec![];
     let mut seen = vec![vec![false; input.w]; input.h];
     seen[s.0][s.1] = true;
@@ -54,23 +53,17 @@ fn dfs(input: &Input, s: (usize, usize), map: &[Vec<Square>]) -> i32 {
         for &(dr, dc) in DIJ.iter() {
             let nr = row + dr;
             let nc = col + dc;
-            if seen[nr][nc] {
-                continue;
-            }
-            if map[nr][nc] == Square::Wall {
+            if seen[nr][nc] || map[nr][nc] == Square::Wall || map[nr][nc] == Square::Trap {
                 continue;
             }
             if map[nr][nc] == Square::Coin {
                 coins += 1;
             }
-            if map[nr][nc] == Square::Trap {
-                traps += 1;
-            }
             seen[nr][nc] = true;
             stack.push((nr, nc));
         }
     }
-    coins - traps
+    coins
 }
 
 fn beam_search(input: &Input, map_ids: Vec<usize>, maps: &[Vec<Vec<Square>>]) -> Output {
