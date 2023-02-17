@@ -1,6 +1,7 @@
 #![allow(clippy::uninlined_format_args)]
 
 use fixedbitset::FixedBitSet;
+use grid::*;
 use itertools::Itertools;
 use rand::prelude::*;
 use rustc_hash::FxHashSet;
@@ -13,34 +14,26 @@ const DIJ: [(usize, usize); 4] = [(0, !0), (!0, 0), (0, 1), (1, 0)];
 const DIR: [char; 4] = ['L', 'U', 'R', 'D'];
 
 fn main() {
-    let (input, maps) = read_input();
-    let (map_ids, maps) = select_maps(&input, maps);
-    let out = beam_search(&input, map_ids, &maps);
+    let input = read_input();
+    let map_ids = select_maps(&input);
+    let out = beam_search(&input, map_ids);
     write_output(&out);
     // eprintln!("score:{}", compute_score(&mut maps, &out));
 }
 
 // k個のマップを選ぶ
-fn select_maps(
-    input: &Input,
-    mut maps: Vec<Vec<Vec<Square>>>,
-) -> (Vec<usize>, Vec<Vec<Vec<Square>>>) {
+fn select_maps(input: &Input) -> Vec<usize> {
     // (コインの個数 - 罠の個数)が大きい方からk個選ぶ
     // 個数はplayerの位置からdfsで数える
     let mut fs = vec![];
-    for (i, map) in maps.iter().enumerate() {
+    for (i, map) in input.maps.iter().enumerate() {
         let pos = find_player_position(map);
         let f_value = dfs(input, pos, map);
         fs.push((f_value, i));
     }
     fs.sort_by_key(|&(f, _)| std::cmp::Reverse(f));
     fs.truncate(input.k);
-    (
-        fs.iter().map(|&(_, i)| i).collect(),
-        fs.iter()
-            .map(|&(_, i)| std::mem::take(&mut maps[i]))
-            .collect(),
-    )
+    fs.into_iter().map(|(_, i)| i).collect()
 }
 
 fn dfs(input: &Input, s: (usize, usize), map: &[Vec<Square>]) -> i32 {
@@ -66,10 +59,10 @@ fn dfs(input: &Input, s: (usize, usize), map: &[Vec<Square>]) -> i32 {
     coins
 }
 
-fn beam_search(input: &Input, map_ids: Vec<usize>, maps: &[Vec<Vec<Square>>]) -> Output {
+fn beam_search(input: &Input, map_ids: Vec<usize>) -> Output {
     const BEAM_WIDTH: usize = 1000;
     let mut tree = {
-        let state = State::new(input, maps.iter().take(input.k).cloned().collect());
+        let state = State::new(input, map_ids.clone());
         let head = Rc::new(Node::new(0, None));
         BeamSearchTree { state, head }
     };
@@ -132,27 +125,31 @@ fn beam_search(input: &Input, map_ids: Vec<usize>, maps: &[Vec<Vec<Square>>]) ->
 #[derive(Clone)]
 struct State {
     score: i32,
-    maps: Vec<Vec<Vec<Square>>>,
+    map_ids: Vec<usize>,
     poses: Vec<(usize, usize)>,
-    visited: Vec<Vec<Vec<bool>>>,
+    visited: Vec<Map2d<bool>>,
     turn: usize,
     hash: u64,
 }
 
 impl State {
-    fn new(input: &Input, maps: Vec<Vec<Vec<Square>>>) -> Self {
-        let poses: Vec<(usize, usize)> = maps.iter().map(|map| find_player_position(map)).collect();
+    fn new(input: &Input, map_ids: Vec<usize>) -> Self {
+        let poses: Vec<(usize, usize)> = map_ids
+            .iter()
+            .map(|&map_id| find_player_position(&input.maps[map_id]))
+            .collect();
         let mut hash = 0;
         for (i, &(r, c)) in poses.iter().enumerate() {
             hash ^= input.player_hashes[i][r][c];
         }
-        let mut visited = vec![vec![vec![false; input.w]; input.h]; input.k];
+        let mut visited =
+            vec![Map2d::new(vec![false; input.w * input.h], input.w, input.h); input.k];
         for (k, &(r, c)) in poses.iter().enumerate() {
             visited[k][r][c] = true;
         }
         State {
             score: 0,
-            maps,
+            map_ids,
             poses,
             visited,
             turn: 0,
@@ -273,10 +270,11 @@ impl BeamSearchTree {
         if self.state.turn == target_turn {
             for (dir, &(dr, dc)) in DIJ.iter().enumerate() {
                 let mut score_diff = 0;
-                let mut is_moved = FixedBitSet::with_capacity(self.state.maps.len());
-                let mut is_new_visited = FixedBitSet::with_capacity(self.state.maps.len());
+                let mut is_moved = FixedBitSet::with_capacity(input.k);
+                let mut is_new_visited = FixedBitSet::with_capacity(input.k);
                 let mut hash_diff = 0;
-                for (k, map) in self.state.maps.iter().enumerate() {
+                for (k, &map_id) in self.state.map_ids.iter().enumerate() {
+                    let map = &input.maps[map_id];
                     let (player_r, player_c) = &self.state.poses[k];
                     let next_r = *player_r + dr;
                     let next_c = *player_c + dc;
@@ -355,6 +353,95 @@ enum Square {
     Empty,
 }
 
+// terry_u16さんに感謝します
+mod grid {
+    #[derive(Debug, Clone, Copy)]
+    pub struct Coordinate {
+        pub index: usize,
+    }
+
+    impl Coordinate {
+        pub fn new(row: usize, col: usize) -> Self {
+            Self {
+                index: row * 50 + col,
+            }
+        }
+
+        pub const fn row(&self) -> usize {
+            self.index / 50
+        }
+
+        pub const fn col(&self) -> usize {
+            self.index % 50
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct Map2d<T> {
+        pub width: usize,
+        pub height: usize,
+        map: Vec<T>,
+    }
+
+    impl<T> Map2d<T> {
+        pub fn new(map: Vec<T>, width: usize, height: usize) -> Self {
+            Self { width, height, map }
+        }
+    }
+
+    impl<T> std::ops::Index<Coordinate> for Map2d<T> {
+        type Output = T;
+
+        #[inline]
+        fn index(&self, coordinate: Coordinate) -> &Self::Output {
+            &self.map[coordinate.index]
+        }
+    }
+
+    impl<T> std::ops::IndexMut<Coordinate> for Map2d<T> {
+        #[inline]
+        fn index_mut(&mut self, coordinate: Coordinate) -> &mut Self::Output {
+            &mut self.map[coordinate.index]
+        }
+    }
+
+    impl<T> std::ops::Index<&Coordinate> for Map2d<T> {
+        type Output = T;
+
+        #[inline]
+        fn index(&self, coordinate: &Coordinate) -> &Self::Output {
+            &self.map[coordinate.row() * self.width + coordinate.col()]
+        }
+    }
+
+    impl<T> std::ops::IndexMut<&Coordinate> for Map2d<T> {
+        #[inline]
+        fn index_mut(&mut self, coordinate: &Coordinate) -> &mut Self::Output {
+            &mut self.map[coordinate.row() * self.width + coordinate.col()]
+        }
+    }
+
+    impl<T> std::ops::Index<usize> for Map2d<T> {
+        type Output = [T];
+
+        #[inline]
+        fn index(&self, row: usize) -> &Self::Output {
+            let begin = row * self.width;
+            let end = begin + self.width;
+            &self.map[begin..end]
+        }
+    }
+
+    impl<T> std::ops::IndexMut<usize> for Map2d<T> {
+        #[inline]
+        fn index_mut(&mut self, row: usize) -> &mut Self::Output {
+            let begin = row * self.width;
+            let end = begin + self.width;
+            &mut self.map[begin..end]
+        }
+    }
+}
+
 #[allow(dead_code)]
 struct Input {
     n: usize,
@@ -362,10 +449,11 @@ struct Input {
     h: usize,
     w: usize,
     t: usize,
+    maps: Vec<Vec<Vec<Square>>>,
     player_hashes: Vec<Vec<Vec<u64>>>,
 }
 
-fn read_input() -> (Input, Vec<Vec<Vec<Square>>>) {
+fn read_input() -> Input {
     use proconio::{input, marker::Chars};
     input! {
         n: usize,
@@ -402,17 +490,15 @@ fn read_input() -> (Input, Vec<Vec<Vec<Square>>>) {
             }
         }
     }
-    (
-        Input {
-            n,
-            k,
-            h,
-            w,
-            t,
-            player_hashes,
-        },
+    Input {
+        n,
+        k,
+        h,
+        w,
+        t,
+        player_hashes,
         maps,
-    )
+    }
 }
 
 #[derive(Clone)]
