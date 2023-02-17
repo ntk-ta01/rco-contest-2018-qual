@@ -287,7 +287,7 @@ impl BeamSearchTree {
                         if map[next_coord] == Square::Coin {
                             score_diff += 1;
                         } else if map[next_coord] == Square::Trap {
-                            // score_diff -= (input.t - self.state.turn) as i32 / 2;
+                            score_diff -= (input.t - self.state.turn) as i32 / 2;
                         }
                     }
                     hash_diff ^= input.player_hashes[k][*player_coord];
