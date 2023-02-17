@@ -1,5 +1,6 @@
 #![allow(clippy::uninlined_format_args)]
 
+use fixedbitset::FixedBitSet;
 use itertools::Itertools;
 use std::{
     cell::RefCell,
@@ -117,12 +118,12 @@ impl Candidate {
 
 struct Action {
     dir: usize,
-    is_moved: Vec<bool>,
-    is_gained: Vec<bool>,
+    is_moved: FixedBitSet,
+    is_gained: FixedBitSet,
 }
 
 impl Action {
-    fn new(dir: usize, is_moved: Vec<bool>, is_gained: Vec<bool>) -> Self {
+    fn new(dir: usize, is_moved: FixedBitSet, is_gained: FixedBitSet) -> Self {
         Action {
             dir,
             is_moved,
@@ -158,8 +159,8 @@ impl BeamSearchTree {
         if self.state.turn == target_turn {
             for (dir, &(dr, dc)) in DIJ.iter().enumerate() {
                 let mut score = self.head.score;
-                let mut is_moved = vec![false; self.state.maps.len()];
-                let mut is_gained = vec![false; self.state.maps.len()];
+                let mut is_moved = FixedBitSet::with_capacity(self.state.maps.len());
+                let mut is_gained = FixedBitSet::with_capacity(self.state.maps.len());
                 for (k, map) in self.state.maps.iter().enumerate() {
                     if self.state.captured[k] > 0 {
                         continue;
@@ -169,11 +170,11 @@ impl BeamSearchTree {
                     let next_c = *player_c + dc;
                     if map[next_r][next_c] == Square::Coin {
                         score += 1;
-                        is_gained[k] = true;
-                        is_moved[k] = true;
+                        is_gained.set(k, true);
+                        is_moved.set(k, true);
                     }
                     if map[next_r][next_c] == Square::Empty {
-                        is_moved[k] = true;
+                        is_moved.set(k, true);
                     }
                 }
                 candidates.push(Candidate::new(
