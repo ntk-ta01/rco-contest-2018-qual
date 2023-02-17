@@ -28,14 +28,11 @@ struct State {
 }
 
 impl State {
-    fn new(
-        score: i32,
-        maps: Vec<Vec<Vec<Square>>>,
-        poses: Vec<(usize, usize)>,
-        captured: Vec<usize>,
-    ) -> Self {
+    fn new(maps: Vec<Vec<Vec<Square>>>) -> Self {
+        let poses = maps.iter().map(|map| find_player_position(map)).collect();
+        let captured = vec![0; maps.len()];
         State {
-            score,
+            score: 0,
             maps,
             poses,
             captured,
@@ -104,18 +101,6 @@ impl State {
     }
 }
 
-struct Candidate {
-    score: i32,
-    parent: Rc<Node>,
-    act: Action,
-}
-
-impl Candidate {
-    fn new(score: i32, parent: Rc<Node>, act: Action) -> Self {
-        Candidate { score, parent, act }
-    }
-}
-
 struct Action {
     dir: usize,
     is_moved: FixedBitSet,
@@ -129,6 +114,18 @@ impl Action {
             is_moved,
             is_gained,
         }
+    }
+}
+
+struct Candidate {
+    score: i32,
+    parent: Rc<Node>,
+    act: Action,
+}
+
+impl Candidate {
+    fn new(score: i32, parent: Rc<Node>, act: Action) -> Self {
+        Candidate { score, parent, act }
     }
 }
 
@@ -155,7 +152,12 @@ struct BeamSearchTree {
 }
 
 impl BeamSearchTree {
-    fn dfs(&mut self, candidates: &mut Vec<Candidate>, target_turn: usize, is_single_path: bool) {
+    fn dfs(
+        &mut self,
+        beam_queue: &mut Vec<Vec<Candidate>>,
+        target_turn: usize,
+        is_single_path: bool,
+    ) {
         if self.state.turn == target_turn {
             for (dir, &(dr, dc)) in DIJ.iter().enumerate() {
                 let mut score = self.head.score;
@@ -177,11 +179,14 @@ impl BeamSearchTree {
                         is_moved.set(k, true);
                     }
                 }
-                candidates.push(Candidate::new(
-                    score,
-                    self.head.clone(),
-                    Action::new(dir, is_moved, is_gained),
-                ));
+                let next_turn = self.state.turn + 1;
+                if next_turn < beam_queue.len() {
+                    beam_queue[next_turn].push(Candidate::new(
+                        score,
+                        self.head.clone(),
+                        Action::new(dir, is_moved, is_gained),
+                    ));
+                }
             }
         } else {
             let node = self.head.clone();
@@ -202,7 +207,7 @@ impl BeamSearchTree {
                         self.head = child.upgrade().unwrap();
                         self.state.apply(act);
 
-                        self.dfs(candidates, target_turn, next_is_single_path);
+                        self.dfs(beam_queue, target_turn, next_is_single_path);
 
                         if !next_is_single_path {
                             self.state.revert(act);
@@ -223,31 +228,28 @@ impl BeamSearchTree {
 fn beam_search(input: &Input, maps: &[Vec<Vec<Square>>]) -> Output {
     const BEAM_WIDTH: usize = 1000;
     let mut tree = {
-        let state = State::new(
-            0,
-            maps.iter().take(input.k).cloned().collect(),
-            maps.iter().map(|map| find_player_position(map)).collect(),
-            vec![0; input.k],
-        );
+        let state = State::new(maps.iter().take(input.k).cloned().collect());
         let head = Rc::new(Node::new(0, None));
         BeamSearchTree { state, head }
     };
     let mut current_queue = vec![tree.head.clone()];
-    let mut candidates = vec![];
+    let mut beam_queue = (0..input.t + 1).map(|_| vec![]).collect_vec();
     for turn in 0..input.t {
-        tree.dfs(&mut candidates, turn, true);
+        tree.dfs(&mut beam_queue, turn, true);
         current_queue.clear();
         if turn + 1 == input.t {
             // 最終ターンなのでcandidatesを作らない
             break;
         }
+        let mut candidates = vec![];
+        std::mem::swap(&mut candidates, &mut beam_queue[turn + 1]);
         if candidates.len() > BEAM_WIDTH {
             selection::select_nth_unstable_by_key(&mut candidates, BEAM_WIDTH - 1, |c| {
                 std::cmp::Reverse(c.score)
             });
             candidates.truncate(BEAM_WIDTH);
         }
-        for candidate in std::mem::take(&mut candidates) {
+        for candidate in candidates {
             let child = Node::new(candidate.score, Some(candidate.parent.clone()));
             let child_ptr = Rc::new(child);
             let children = &mut candidate.parent.children.borrow_mut();
@@ -255,7 +257,8 @@ fn beam_search(input: &Input, maps: &[Vec<Vec<Square>>]) -> Output {
             current_queue.push(child_ptr);
         }
     }
-    let best_candidate = candidates
+    let last_candidates = beam_queue.pop().unwrap();
+    let best_candidate = last_candidates
         .into_iter()
         .max_by_key(|state| state.score)
         .unwrap();
@@ -399,7 +402,13 @@ fn write_output(out: &Output) {
 
 /// select_nth_unstable()をRust 1.49以前でも使えるようにするモジュール
 /// 言語アップデートが行われれば不要になるはず
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    clippy::ptr_offset_with_cast,
+    clippy::identity_op,
+    clippy::assign_op_pattern,
+    clippy::comparison_chain
+)]
 mod selection {
     use std::cmp;
     use std::mem::{self, MaybeUninit};
