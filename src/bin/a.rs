@@ -10,15 +10,18 @@ use std::{
     rc::{Rc, Weak},
 };
 
-const DIJ: [(usize, usize); 4] = [(0, !0), (!0, 0), (0, 1), (1, 0)];
-const DIR: [char; 4] = ['L', 'U', 'R', 'D'];
+// const DIJ: [(usize, usize); 4] = [(0, !0), (!0, 0), (0, 1), (1, 0)];
+// const DIR: [char; 4] = ['L', 'U', 'R', 'D'];
 
 fn main() {
     let input = read_input();
     let map_ids = select_maps(&input);
     let out = beam_search(&input, map_ids);
     write_output(&out);
-    // eprintln!("score:{}", compute_score(&mut maps, &out));
+    // eprintln!(
+    //     "score:{}",
+    //     compute_score(&input, &mut input.maps.clone(), &out)
+    // );
 }
 
 // k個のマップを選ぶ
@@ -27,7 +30,7 @@ fn select_maps(input: &Input) -> Vec<usize> {
     // 個数はplayerの位置からdfsで数える
     let mut fs = vec![];
     for (i, map) in input.maps.iter().enumerate() {
-        let pos = find_player_position(map);
+        let pos = find_player_position(input, map);
         let f_value = dfs(input, pos, map);
         fs.push((f_value, i));
     }
@@ -36,24 +39,26 @@ fn select_maps(input: &Input) -> Vec<usize> {
     fs.into_iter().map(|(_, i)| i).collect()
 }
 
-fn dfs(input: &Input, s: (usize, usize), map: &[Vec<Square>]) -> i32 {
+fn dfs(input: &Input, s: Coordinate, map: &Map2d<Square>) -> i32 {
     let mut coins = 0;
     let mut stack = vec![];
-    let mut seen = vec![vec![false; input.w]; input.h];
-    seen[s.0][s.1] = true;
+    let mut seen = Map2d::new(vec![false; input.w * input.h], input.w, input.h);
+    seen[s] = true;
     stack.push(s);
-    while let Some((row, col)) = stack.pop() {
-        for &(dr, dc) in DIJ.iter() {
-            let nr = row + dr;
-            let nc = col + dc;
-            if seen[nr][nc] || map[nr][nc] == Square::Wall || map[nr][nc] == Square::Trap {
+    while let Some(coord) = stack.pop() {
+        for &adj in ADJACENTS.iter() {
+            let next_coord = coord + adj;
+            if seen[next_coord]
+                || map[next_coord] == Square::Wall
+                || map[next_coord] == Square::Trap
+            {
                 continue;
             }
-            if map[nr][nc] == Square::Coin {
+            if map[next_coord] == Square::Coin {
                 coins += 1;
             }
-            seen[nr][nc] = true;
-            stack.push((nr, nc));
+            seen[next_coord] = true;
+            stack.push(next_coord);
         }
     }
     coins
@@ -104,7 +109,7 @@ fn beam_search(input: &Input, map_ids: Vec<usize>) -> Output {
         .unwrap();
 
     // 復元
-    let mut commands = vec![DIR[best_candidate.act.dir]];
+    let mut commands = vec![DIRECTIONS[best_candidate.act.dir]];
     commands.reserve(input.t);
     let mut parent = best_candidate.parent;
     while let Some(p) = parent.parent.clone() {
@@ -114,7 +119,7 @@ fn beam_search(input: &Input, map_ids: Vec<usize>) -> Output {
                 .iter()
                 .find(|(_, child)| child.upgrade().is_some())
                 .unwrap();
-            commands.push(DIR[act.dir]);
+            commands.push(DIRECTIONS[act.dir]);
         }
         parent = p;
     }
@@ -126,7 +131,7 @@ fn beam_search(input: &Input, map_ids: Vec<usize>) -> Output {
 struct State {
     score: i32,
     map_ids: Vec<usize>,
-    poses: Vec<(usize, usize)>,
+    poses: Vec<Coordinate>,
     visited: Vec<Map2d<bool>>,
     turn: usize,
     hash: u64,
@@ -134,18 +139,18 @@ struct State {
 
 impl State {
     fn new(input: &Input, map_ids: Vec<usize>) -> Self {
-        let poses: Vec<(usize, usize)> = map_ids
+        let poses: Vec<Coordinate> = map_ids
             .iter()
-            .map(|&map_id| find_player_position(&input.maps[map_id]))
+            .map(|&map_id| find_player_position(input, &input.maps[map_id]))
             .collect();
         let mut hash = 0;
-        for (i, &(r, c)) in poses.iter().enumerate() {
-            hash ^= input.player_hashes[i][r][c];
+        for (i, &c) in poses.iter().enumerate() {
+            hash ^= input.player_hashes[i][c];
         }
         let mut visited =
             vec![Map2d::new(vec![false; input.w * input.h], input.w, input.h); input.k];
-        for (k, &(r, c)) in poses.iter().enumerate() {
-            visited[k][r][c] = true;
+        for (k, &c) in poses.iter().enumerate() {
+            visited[k][c] = true;
         }
         State {
             score: 0,
@@ -161,15 +166,13 @@ impl State {
         self.turn += 1;
         self.score += act.score_diff;
         self.hash ^= act.hash_diff;
-        for (k, (player_r, player_c)) in self.poses.iter_mut().enumerate() {
-            let next_r = *player_r + DIJ[act.dir].0;
-            let next_c = *player_c + DIJ[act.dir].1;
+        for (k, player_coord) in self.poses.iter_mut().enumerate() {
+            let next_coord = *player_coord + ADJACENTS[act.dir];
             if act.is_moved[k] {
-                *player_r = next_r;
-                *player_c = next_c;
+                *player_coord = next_coord;
             }
             if act.is_new_visited[k] {
-                self.visited[k][*player_r][*player_c] = true;
+                self.visited[k][*player_coord] = true;
             }
         }
     }
@@ -179,15 +182,13 @@ impl State {
         self.score -= act.score_diff;
         self.hash ^= act.hash_diff;
         let rev_dir = (act.dir + 2) % 4;
-        for (k, (player_r, player_c)) in self.poses.iter_mut().enumerate() {
-            let prev_r = *player_r + DIJ[rev_dir].0;
-            let prev_c = *player_c + DIJ[rev_dir].1;
+        for (k, player_coord) in self.poses.iter_mut().enumerate() {
+            let prev_coord = *player_coord + ADJACENTS[rev_dir];
             if act.is_new_visited[k] {
-                self.visited[k][*player_r][*player_c] = false;
+                self.visited[k][*player_coord] = false;
             }
             if act.is_moved[k] {
-                *player_r = prev_r;
-                *player_c = prev_c;
+                *player_coord = prev_coord;
             }
         }
     }
@@ -268,32 +269,29 @@ impl BeamSearchTree {
         is_single_path: bool,
     ) {
         if self.state.turn == target_turn {
-            for (dir, &(dr, dc)) in DIJ.iter().enumerate() {
+            for (dir, &adj) in ADJACENTS.iter().enumerate() {
                 let mut score_diff = 0;
                 let mut is_moved = FixedBitSet::with_capacity(input.k);
                 let mut is_new_visited = FixedBitSet::with_capacity(input.k);
                 let mut hash_diff = 0;
                 for (k, &map_id) in self.state.map_ids.iter().enumerate() {
                     let map = &input.maps[map_id];
-                    let (player_r, player_c) = &self.state.poses[k];
-                    let next_r = *player_r + dr;
-                    let next_c = *player_c + dc;
-                    if map[*player_r][*player_c] == Square::Trap
-                        || map[next_r][next_c] == Square::Wall
-                    {
+                    let player_coord = &self.state.poses[k];
+                    let next_coord = *player_coord + adj;
+                    if map[*player_coord] == Square::Trap || map[next_coord] == Square::Wall {
                         continue;
                     }
                     is_moved.set(k, true);
-                    if !self.state.visited[k][next_r][next_c] {
+                    if !self.state.visited[k][next_coord] {
                         is_new_visited.set(k, true);
-                        if map[next_r][next_c] == Square::Coin {
+                        if map[next_coord] == Square::Coin {
                             score_diff += 1;
-                        } else if map[next_r][next_c] == Square::Trap {
+                        } else if map[next_coord] == Square::Trap {
                             // score_diff -= (input.t - self.state.turn) as i32 / 2;
                         }
                     }
-                    hash_diff ^= input.player_hashes[k][*player_r][*player_c];
-                    hash_diff ^= input.player_hashes[k][next_r][next_c];
+                    hash_diff ^= input.player_hashes[k][*player_coord];
+                    hash_diff ^= input.player_hashes[k][next_coord];
                 }
                 // next_turnが+1じゃないアクションが存在する問題のために
                 // 下のif文を書いたり、beam_queueの長さをinput.t+1にする
@@ -376,6 +374,30 @@ mod grid {
         }
     }
 
+    #[derive(Debug, Clone, Copy)]
+    pub struct CoordinateDiff {
+        pub diff: usize,
+    }
+
+    impl std::ops::Add<CoordinateDiff> for Coordinate {
+        type Output = Coordinate;
+
+        fn add(self, rhs: CoordinateDiff) -> Self::Output {
+            Coordinate {
+                index: self.index + rhs.diff,
+            }
+        }
+    }
+
+    pub const ADJACENTS: [CoordinateDiff; 4] = [
+        CoordinateDiff { diff: !0 },
+        CoordinateDiff { diff: !49 },
+        CoordinateDiff { diff: 1 },
+        CoordinateDiff { diff: 50 },
+    ];
+
+    pub const DIRECTIONS: [char; 4] = ['L', 'U', 'R', 'D'];
+
     #[derive(Debug, Clone)]
     pub struct Map2d<T> {
         pub width: usize,
@@ -449,8 +471,8 @@ struct Input {
     h: usize,
     w: usize,
     t: usize,
-    maps: Vec<Vec<Vec<Square>>>,
-    player_hashes: Vec<Vec<Vec<u64>>>,
+    maps: Vec<Map2d<Square>>,
+    player_hashes: Vec<Map2d<u64>>,
 }
 
 fn read_input() -> Input {
@@ -463,30 +485,32 @@ fn read_input() -> Input {
         t: usize,
         maps: [[Chars; h];n],
     }
-    let maps = maps
-        .into_iter()
-        .map(|map| {
-            map.into_iter()
-                .map(|row| {
-                    row.into_iter()
-                        .map(|ch| match ch {
-                            '@' => Square::Player,
-                            'o' => Square::Coin,
-                            'x' => Square::Trap,
-                            '#' => Square::Wall,
-                            _ => unreachable!("マップの入力が不正です"),
-                        })
-                        .collect()
-                })
-                .collect()
-        })
-        .collect();
-    let mut player_hashes = vec![vec![vec![0; w]; h]; k];
+    let maps = {
+        let mut ms = vec![];
+        for map in maps {
+            let mut m = vec![];
+            for row in map {
+                for ch in row {
+                    let square = match ch {
+                        '@' => Square::Player,
+                        'o' => Square::Coin,
+                        'x' => Square::Trap,
+                        '#' => Square::Wall,
+                        _ => unreachable!("マップの入力が不正です"),
+                    };
+                    m.push(square);
+                }
+            }
+            ms.push(Map2d::new(m, w, h));
+        }
+        ms
+    };
+    let mut player_hashes = vec![Map2d::new(vec![0_u64; w * h], w, h); k];
     let mut rng = rand_pcg::Pcg64Mcg::new(0);
     for player_hash in player_hashes.iter_mut() {
-        for row in player_hash.iter_mut() {
-            for h in row.iter_mut() {
-                *h = rng.gen();
+        for row in 0..h {
+            for col in 0..w {
+                player_hash[Coordinate::new(row, col)] = rng.gen();
             }
         }
     }
@@ -514,42 +538,41 @@ impl Output {
 }
 
 #[allow(dead_code)]
-fn compute_map_score(map: &mut [Vec<Square>], out: &Output) -> i32 {
-    let (mut player_r, mut player_c) = find_player_position(map);
+fn compute_map_score(input: &Input, map: &mut Map2d<Square>, out: &Output) -> i32 {
+    let mut player_coord = find_player_position(input, map);
     let mut score = 0;
     for &ch in out.commands.iter() {
-        if let Some(d) = DIR.iter().position(|dir_c| *dir_c == ch) {
-            let next_r = player_r + DIJ[d].0;
-            let next_c = player_c + DIJ[d].1;
-            match map[next_r][next_c] {
+        if let Some(d) = DIRECTIONS.iter().position(|dir_c| *dir_c == ch) {
+            let next_coord = player_coord + ADJACENTS[d];
+            match map[next_coord] {
                 Square::Wall => continue,
                 Square::Trap => break,
                 Square::Coin => score += 1,
                 Square::Empty => {}
                 Square::Player => unreachable!("プレイヤーが複数います"),
             }
-            map[player_r][player_c] = Square::Empty;
-            player_r = next_r;
-            player_c = next_c;
+            map[player_coord] = Square::Empty;
+            player_coord = next_coord
         }
     }
     score
 }
 
 #[allow(dead_code)]
-fn compute_score(maps: &mut [Vec<Vec<Square>>], out: &Output) -> i32 {
+fn compute_score(input: &Input, maps: &mut [Map2d<Square>], out: &Output) -> i32 {
     let mut score = 0;
-    for map in maps.iter_mut() {
-        score += compute_map_score(map, out);
+    for &map_id in out.map_ids.iter() {
+        score += compute_map_score(input, &mut maps[map_id], out);
     }
     score
 }
 
-fn find_player_position(map: &[Vec<Square>]) -> (usize, usize) {
-    for (r, row) in map.iter().enumerate() {
-        for (c, square) in row.iter().enumerate() {
-            if *square == Square::Player {
-                return (r, c);
+fn find_player_position(input: &Input, map: &Map2d<Square>) -> Coordinate {
+    for row in 0..input.h {
+        for col in 0..input.w {
+            let c = Coordinate::new(row, col);
+            if map[c] == Square::Player {
+                return c;
             }
         }
     }
