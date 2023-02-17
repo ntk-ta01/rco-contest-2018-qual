@@ -11,8 +11,7 @@ const DIJ: [(usize, usize); 4] = [(0, !0), (!0, 0), (0, 1), (1, 0)];
 const DIR: [char; 4] = ['L', 'U', 'R', 'D'];
 
 fn main() {
-    let input = read_input();
-    let maps = input.maps.clone();
+    let (input, maps) = read_input();
     let out = beam_search(&input, &maps);
     write_output(&out);
     // eprintln!("score:{}", compute_score(&mut maps, &out));
@@ -298,10 +297,9 @@ struct Input {
     h: usize,
     w: usize,
     t: usize,
-    maps: Vec<Vec<Vec<Square>>>,
 }
 
-fn read_input() -> Input {
+fn read_input() -> (Input, Vec<Vec<Vec<Square>>>) {
     use proconio::{input, marker::Chars};
     input! {
         n: usize,
@@ -329,14 +327,7 @@ fn read_input() -> Input {
                 .collect()
         })
         .collect();
-    Input {
-        n,
-        k,
-        h,
-        w,
-        t,
-        maps,
-    }
+    (Input { n, k, h, w, t }, maps)
 }
 
 #[derive(Clone)]
