@@ -14,12 +14,66 @@ const DIR: [char; 4] = ['L', 'U', 'R', 'D'];
 
 fn main() {
     let (input, maps) = read_input();
-    let out = beam_search(&input, &maps);
+    let (map_ids, mut maps) = select_maps(&input, maps);
+    let out = beam_search(&input, map_ids, &maps);
     write_output(&out);
-    // eprintln!("score:{}", compute_score(&mut maps, &out));
+    eprintln!("score:{}", compute_score(&mut maps, &out));
 }
 
-fn beam_search(input: &Input, maps: &[Vec<Vec<Square>>]) -> Output {
+// k個のマップを選ぶ
+fn select_maps(
+    input: &Input,
+    mut maps: Vec<Vec<Vec<Square>>>,
+) -> (Vec<usize>, Vec<Vec<Vec<Square>>>) {
+    // (コインの個数 - 罠の個数)が大きい方からk個選ぶ
+    // 個数はplayerの位置からdfsで数える
+    let mut fs = vec![];
+    for (i, map) in maps.iter().enumerate() {
+        let pos = find_player_position(map);
+        let f_value = dfs(input, pos, map);
+        fs.push((f_value, i));
+    }
+    fs.sort_by_key(|&(f, _)| std::cmp::Reverse(f));
+    fs.truncate(input.k);
+    (
+        fs.iter().map(|&(_, i)| i).collect(),
+        fs.iter()
+            .map(|&(_, i)| std::mem::take(&mut maps[i]))
+            .collect(),
+    )
+}
+
+fn dfs(input: &Input, s: (usize, usize), map: &[Vec<Square>]) -> i32 {
+    let mut coins = 0;
+    let mut traps = 0;
+    let mut stack = vec![];
+    let mut seen = vec![vec![false; input.w]; input.h];
+    seen[s.0][s.1] = true;
+    stack.push(s);
+    while let Some((row, col)) = stack.pop() {
+        for &(dr, dc) in DIJ.iter() {
+            let nr = row + dr;
+            let nc = col + dc;
+            if seen[nr][nc] {
+                continue;
+            }
+            if map[nr][nc] == Square::Wall {
+                continue;
+            }
+            if map[nr][nc] == Square::Coin {
+                coins += 1;
+            }
+            if map[nr][nc] == Square::Trap {
+                traps += 1;
+            }
+            seen[nr][nc] = true;
+            stack.push((nr, nc));
+        }
+    }
+    coins - traps
+}
+
+fn beam_search(input: &Input, map_ids: Vec<usize>, maps: &[Vec<Vec<Square>>]) -> Output {
     const BEAM_WIDTH: usize = 1000;
     let mut tree = {
         let state = State::new(input, maps.iter().take(input.k).cloned().collect());
@@ -79,7 +133,7 @@ fn beam_search(input: &Input, maps: &[Vec<Vec<Square>>]) -> Output {
         parent = p;
     }
     commands.reverse();
-    Output::new((0..input.k).collect(), commands)
+    Output::new(map_ids, commands)
 }
 
 #[derive(Clone)]
@@ -383,13 +437,13 @@ fn read_input() -> (Input, Vec<Vec<Vec<Square>>>) {
 
 #[derive(Clone)]
 struct Output {
-    maps: Vec<usize>,
+    map_ids: Vec<usize>,
     commands: Vec<char>,
 }
 
 impl Output {
-    fn new(maps: Vec<usize>, commands: Vec<char>) -> Self {
-        Output { maps, commands }
+    fn new(map_ids: Vec<usize>, commands: Vec<char>) -> Self {
+        Output { map_ids, commands }
     }
 }
 
@@ -419,8 +473,7 @@ fn compute_map_score(map: &mut [Vec<Square>], out: &Output) -> i32 {
 #[allow(dead_code)]
 fn compute_score(maps: &mut [Vec<Vec<Square>>], out: &Output) -> i32 {
     let mut score = 0;
-    for &k in out.maps.iter() {
-        let map = &mut maps[k];
+    for map in maps.iter_mut() {
         score += compute_map_score(map, out);
     }
     score
@@ -438,7 +491,7 @@ fn find_player_position(map: &[Vec<Square>]) -> (usize, usize) {
 }
 
 fn write_output(out: &Output) {
-    println!("{}", out.maps.iter().join(" "));
+    println!("{}", out.map_ids.iter().join(" "));
     println!("{}", out.commands.iter().join(""));
 }
 
