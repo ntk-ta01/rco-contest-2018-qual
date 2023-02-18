@@ -10,9 +10,6 @@ use std::{
     rc::{Rc, Weak},
 };
 
-// const DIJ: [(usize, usize); 4] = [(0, !0), (!0, 0), (0, 1), (1, 0)];
-// const DIR: [char; 4] = ['L', 'U', 'R', 'D'];
-
 fn main() {
     let input = read_input();
     let map_ids = select_maps(&input);
