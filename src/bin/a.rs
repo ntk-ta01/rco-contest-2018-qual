@@ -332,6 +332,315 @@ impl BeamSearchTree {
     }
 }
 
+mod beam_search {
+    use crate::selection;
+    use itertools::Itertools;
+    use rustc_hash::FxHashSet;
+    use std::{
+        cell::RefCell,
+        cmp::Reverse,
+        marker::PhantomData,
+        rc::{Rc, Weak},
+    };
+
+    pub trait Action {
+        /// 変形により消費されるターン数（デフォルト値:1）
+        fn get_consumed_turn(&self) -> usize {
+            1
+        }
+    }
+    pub trait State<A: Action> {
+        // 変形操作を適用する
+        fn apply(&mut self, action: &A);
+
+        // 変形操作の逆操作を行う
+        fn revert(&mut self, action: &A);
+
+        /// 状態のスコア
+        fn score(&self) -> i32;
+
+        /// ターン数
+        fn turn(&self) -> usize;
+
+        /// ハッシュ
+        fn hash(&self) -> u64;
+    }
+
+    #[allow(clippy::type_complexity)]
+    struct Node<S, A>
+    where
+        S: State<A>,
+        A: Action,
+    {
+        /// 親ノードへの参照
+        parent: Option<Rc<Node<S, A>>>,
+        /// (操作, 子ノード)のVec
+        children: RefCell<Vec<(A, Weak<Node<S, A>>)>>,
+    }
+
+    impl<S, A> Node<S, A>
+    where
+        S: State<A>,
+        A: Action,
+    {
+        fn new(parent: Option<Rc<Node<S, A>>>) -> Self {
+            let children = RefCell::new(vec![]);
+            Self { parent, children }
+        }
+    }
+
+    /// 次の遷移先候補
+    struct Candidate<S, A>
+    where
+        S: State<A>,
+        A: Action,
+    {
+        /// 変形操作
+        action: A,
+        /// 親ノード
+        parent: Rc<Node<S, A>>,
+        /// スコア
+        score: i32,
+        /// ハッシュ
+        hash: u64,
+    }
+
+    impl<S, A> Candidate<S, A>
+    where
+        S: State<A>,
+        A: Action,
+    {
+        fn new(action: A, parent: Rc<Node<S, A>>, score: i32, hash: u64) -> Self {
+            Self {
+                action,
+                parent,
+                score,
+                hash,
+            }
+        }
+    }
+
+    /// 変形操作の生成器
+    pub trait ActionGenerator<S, A> {
+        /// ある状態に対して有効な変形操作を列挙し、stackに詰める
+        fn enumerate(&self, state: &mut S, stack: &mut Vec<(A, i32, u64)>);
+    }
+
+    /// ビーム幅の管理
+    pub trait WidthManager {
+        fn beam_width(&self) -> usize;
+    }
+
+    /// ビーム幅固定戦略
+    pub struct FixedWidthManager {
+        width: usize,
+    }
+
+    impl FixedWidthManager {
+        pub fn new(width: usize) -> Self {
+            Self { width }
+        }
+    }
+
+    impl WidthManager for FixedWidthManager {
+        fn beam_width(&self) -> usize {
+            self.width
+        }
+    }
+
+    /// ビームサーチ
+    pub struct BeamSearch<S, A, G, W>
+    where
+        S: State<A>,
+        A: Action,
+        G: ActionGenerator<S, A>,
+        W: WidthManager,
+    {
+        /// 最大ターン数
+        max_turn: usize,
+        /// ビーム幅
+        width_manager: W,
+        /// 変形操作の生成を行うジェネレータ
+        generator: G,
+        _phantom_state: PhantomData<S>,
+        _phantom_action: PhantomData<A>,
+    }
+
+    impl<S, A, G, W> BeamSearch<S, A, G, W>
+    where
+        S: State<A>,
+        A: Action + Clone,
+        G: ActionGenerator<S, A>,
+        W: WidthManager,
+    {
+        pub fn new(max_turn: usize, width_manager: W, generator: G) -> Self {
+            Self {
+                max_turn,
+                width_manager,
+                generator,
+                _phantom_state: PhantomData,
+                _phantom_action: PhantomData,
+            }
+        }
+
+        /// ビームサーチを実行し、最終的な操作列を得る
+        pub fn run(&self, state: S) -> Vec<A> {
+            let mut tree = Tree::new(state, &self.generator);
+            let mut current_queue = vec![tree.head.clone()];
+            let mut beam_queues = (0..(self.max_turn + 1)).map(|_| vec![]).collect_vec();
+            let mut hash_set = FxHashSet::default();
+
+            for turn in 0..self.max_turn {
+                // ビームを1段階進めて遷移先候補を得る
+                tree.dfs(&mut beam_queues, turn, true);
+                current_queue.clear();
+
+                if turn + 1 == self.max_turn {
+                    // 最終ターンなのでcandidatesを作らない
+                    break;
+                }
+
+                // Vecの中身を消費するために空のVecとswapする
+                let mut candidates = vec![];
+                std::mem::swap(&mut candidates, &mut beam_queues[turn + 1]);
+
+                // 上位beam_width件だけ残す
+                let beam_width = self.width_manager.beam_width();
+                if candidates.len() > beam_width {
+                    selection::select_nth_unstable_by_key(&mut candidates, beam_width - 1, |c| {
+                        Reverse(c.score)
+                    });
+                    candidates.truncate(beam_width);
+                }
+
+                // 残った候補をビームサーチ木に追加する
+                hash_set.clear();
+                for candidate in candidates {
+                    if !hash_set.insert(candidate.hash) {
+                        continue;
+                    }
+
+                    let child = Node::new(Some(candidate.parent.clone()));
+                    let child_ptr = Rc::new(child);
+                    let children = &mut candidate.parent.children.borrow_mut();
+                    children.push((candidate.action, Rc::downgrade(&child_ptr)));
+                    current_queue.push(child_ptr);
+                }
+            }
+
+            let last_queue = beam_queues.pop().unwrap();
+            let best_candidate = last_queue
+                .into_iter()
+                .max_by_key(|state| state.score)
+                .unwrap();
+
+            // 復元
+            let mut actions = vec![best_candidate.action.clone()];
+            actions.reserve(self.max_turn);
+            let mut parent = best_candidate.parent;
+            while let Some(p) = parent.parent.clone() {
+                {
+                    let children = &mut p.children.borrow_mut();
+                    let (action, _) = children
+                        .iter()
+                        .find(|(_, child)| child.upgrade().is_some())
+                        .unwrap();
+                    actions.push(action.clone());
+                }
+                parent = p;
+            }
+
+            actions.reverse();
+            actions
+        }
+    }
+
+    /// ビームサーチ木
+    struct Tree<'a, S, A, G>
+    where
+        S: State<A>,
+        A: Action,
+        G: ActionGenerator<S, A>,
+    {
+        state: S,
+        head: Rc<Node<S, A>>,
+        generator: &'a G,
+        stack: Vec<(A, i32, u64)>,
+    }
+
+    impl<'a, S, A, G> Tree<'a, S, A, G>
+    where
+        S: State<A>,
+        A: Action,
+        G: ActionGenerator<S, A>,
+    {
+        fn new(state: S, generator: &'a G) -> Self {
+            let head = Rc::new(Node::new(None));
+            let stack = vec![];
+            Self {
+                state,
+                head,
+                generator,
+                stack,
+            }
+        }
+
+        /// ビームサーチ木に対してDFSを行い、
+        /// 深さがtarget_turnのノードから次の遷移先候補を列挙する
+        fn dfs(
+            &mut self,
+            beam_queues: &mut Vec<Vec<Candidate<S, A>>>,
+            target_turn: usize,
+            single_path: bool,
+        ) {
+            if self.state.turn() == target_turn {
+                self.generator.enumerate(&mut self.state, &mut self.stack);
+
+                while let Some((action, next_score, next_hash)) = self.stack.pop() {
+                    let next_turn = self.state.turn() + action.get_consumed_turn();
+                    if next_turn < beam_queues.len() {
+                        let candidate =
+                            Candidate::new(action, self.head.clone(), next_score, next_hash);
+                        beam_queues[next_turn].push(candidate);
+                    }
+                }
+            } else {
+                let node = self.head.clone();
+
+                let next_single_path = {
+                    let children = &mut node.children.borrow_mut();
+                    children.retain(|(_, child)| child.upgrade().is_some());
+                    if children.is_empty() {
+                        false
+                    } else {
+                        let next_is_single_path = single_path && (children.len() == 1);
+                        for (action, child) in children.iter_mut() {
+                            let next_turn = self.state.turn() + 1;
+                            if next_turn > target_turn {
+                                continue;
+                            }
+
+                            self.head = child.upgrade().unwrap();
+                            self.state.apply(action);
+
+                            self.dfs(beam_queues, target_turn, next_is_single_path);
+
+                            if !next_is_single_path {
+                                self.state.revert(action);
+                            }
+                        }
+                        next_is_single_path
+                    }
+                };
+
+                if !next_single_path {
+                    self.head = node;
+                }
+            }
+        }
+    }
+}
+
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
 enum Square {
     Player,
