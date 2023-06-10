@@ -11,10 +11,8 @@ use threadpool::ThreadPool;
 fn main() {
     fs::remove_dir_all("./tools/out").unwrap();
     fs::create_dir("./tools/out").unwrap();
-    let files = fs::read_dir("./tools/in/")
-        .unwrap()
-        .into_iter()
-        .collect::<Vec<_>>(); // pbを作るときにファイル数が知りたくてlenにしているが、もっといい方法ある？
+    // pbを作るときにファイル数が知りたくてlenにしているが、もっといい方法ある？
+    let files = fs::read_dir("./tools/in/").unwrap().collect::<Vec<_>>();
 
     // プログレスバーの初期化
     let sty = ProgressStyle::with_template(
