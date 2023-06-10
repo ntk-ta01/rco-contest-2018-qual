@@ -11,8 +11,6 @@ use threadpool::ThreadPool;
 fn main() {
     fs::remove_dir_all("./tools/out").unwrap();
     fs::create_dir("./tools/out").unwrap();
-    fs::remove_dir_all("./tools/err").unwrap();
-    fs::create_dir("./tools/err").unwrap();
     let files = fs::read_dir("./tools/in/")
         .unwrap()
         .into_iter()
@@ -54,7 +52,6 @@ fn exec(file_path: PathBuf) -> i64 {
     let file_name = file_path.file_name().unwrap().to_string_lossy();
     let in_file = format!("./tools/in/{file_name}");
     let out_file = format!("./tools/out/{file_name}");
-    let err_file = format!("./tools/err/{file_name}");
     {
         // 実行部分
         let p = std::process::Command::new("cargo")
@@ -80,8 +77,6 @@ fn exec(file_path: PathBuf) -> i64 {
         let output = p.wait_with_output().unwrap();
         let mut file = fs::File::create(out_file).unwrap();
         file.write_all(&output.stdout).unwrap();
-        let mut file = fs::File::create(err_file).unwrap();
-        file.write_all(&output.stderr).unwrap();
     };
 
     // ジャッジ部分
