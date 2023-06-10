@@ -1,5 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
-
 use fixedbitset::FixedBitSet;
 use grid::*;
 use itertools::Itertools;
