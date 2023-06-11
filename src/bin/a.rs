@@ -6,10 +6,29 @@ fn main() {
     let input = read_input();
     let map_ids = select_maps(&input);
     let state = State::new(&input, map_ids.clone());
-    let width_manager = beam_search::FixedWidthManager::new(1000);
+    let width_manager = RampWidthManager::new(1000, 3500);
     let generator = ActionGenerator::new(&input);
     let actions = beam_search::BeamSearch::new(input.t, width_manager, generator).run(state);
     write_output(actions, map_ids);
+}
+
+struct RampWidthManager {
+    width1: usize,
+    width2: usize,
+}
+
+impl RampWidthManager {
+    fn new(width1: usize, width2: usize) -> Self {
+        RampWidthManager { width1, width2 }
+    }
+}
+
+impl beam_search::WidthManager for RampWidthManager {
+    fn beam_width(&self, turn: usize, _elapsed: std::time::Duration) -> usize {
+        let t = turn as f64 / 2500.0; // max_turn = 2500
+                                      // だんだんwidth1 -> width2になるようにする
+        (self.width1 as f64 * (1.0 - t) + self.width2 as f64 * t) as usize / 2
+    }
 }
 
 // k個のマップを選ぶ
@@ -211,6 +230,7 @@ mod beam_search {
         cmp::Reverse,
         marker::PhantomData,
         rc::{Rc, Weak},
+        time::{Duration, Instant},
     };
 
     pub trait Action {
@@ -298,7 +318,8 @@ mod beam_search {
 
     /// ビーム幅の管理
     pub trait WidthManager {
-        fn beam_width(&self) -> usize;
+        /// 現在のターン数と経過時間からビーム幅を算出する
+        fn beam_width(&self, turn: usize, elapsed: Duration) -> usize;
     }
 
     /// ビーム幅固定戦略
@@ -313,7 +334,7 @@ mod beam_search {
     }
 
     impl WidthManager for FixedWidthManager {
-        fn beam_width(&self) -> usize {
+        fn beam_width(&self, _turn: usize, _elapsed: Duration) -> usize {
             self.width
         }
     }
@@ -355,12 +376,15 @@ mod beam_search {
 
         /// ビームサーチを実行し、最終的な操作列を得る
         pub fn run(&self, state: S) -> Vec<A> {
+            let since = Instant::now();
             let mut tree = Tree::new(state, &self.generator);
             let mut current_queue = vec![tree.head.clone()];
             let mut beam_queues = (0..(self.max_turn + 1)).map(|_| vec![]).collect_vec();
             let mut hash_set = FxHashSet::default();
 
             for turn in 0..self.max_turn {
+                let elapsed = Instant::now() - since;
+
                 // ビームを1段階進めて遷移先候補を得る
                 tree.dfs(&mut beam_queues, turn, true);
                 current_queue.clear();
@@ -375,7 +399,7 @@ mod beam_search {
                 std::mem::swap(&mut candidates, &mut beam_queues[turn + 1]);
 
                 // 上位beam_width件だけ残す
-                let beam_width = self.width_manager.beam_width();
+                let beam_width = self.width_manager.beam_width(turn, elapsed);
                 if candidates.len() > beam_width {
                     selection::select_nth_unstable_by_key(&mut candidates, beam_width - 1, |c| {
                         Reverse(c.score)
