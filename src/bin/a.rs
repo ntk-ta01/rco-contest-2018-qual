@@ -6,7 +6,7 @@ fn main() {
     let input = read_input();
     let map_ids = select_maps(&input);
     let state = State::new(&input, map_ids.clone());
-    let width_manager = RampWidthManager::new(1250, 3500);
+    let width_manager = RampWidthManager::new(1250, 2500);
     let generator = ActionGenerator::new(&input);
     let actions = beam_search::BeamSearch::new(input.t, width_manager, generator).run(state);
     write_output(actions, map_ids);
