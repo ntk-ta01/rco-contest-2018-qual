@@ -6,7 +6,7 @@ fn main() {
     let input = read_input();
     let map_ids = select_maps(&input);
     let state = State::new(&input, map_ids.clone());
-    let width_manager = RampWidthManager::new(1000, 3500);
+    let width_manager = RampWidthManager::new(1250, 3500);
     let generator = ActionGenerator::new(&input);
     let actions = beam_search::BeamSearch::new(input.t, width_manager, generator).run(state);
     write_output(actions, map_ids);
@@ -26,8 +26,7 @@ impl RampWidthManager {
 impl beam_search::WidthManager for RampWidthManager {
     fn beam_width(&self, turn: usize, _elapsed: std::time::Duration) -> usize {
         let t = turn as f64 / 2500.0; // max_turn = 2500
-                                      // だんだんwidth1 -> width2になるようにする
-        (self.width1 as f64 * (1.0 - t) + self.width2 as f64 * t) as usize / 2
+        (self.width1 as f64 * (1.0 - t) + self.width2 as f64 * t) as usize // だんだんwidth1 -> width2になるようにする
     }
 }
 
